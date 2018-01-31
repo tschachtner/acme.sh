@@ -26,7 +26,7 @@ dns_ispconfig_add() {
 dns_ispconfig_rm() {
   fulldomain="${1}"
   _debug "Calling: dns_ispconfig_rm() '${fulldomain}'"
-  _ISPC_credentials && _ISPC_login && _ISPC_rmTxt
+  _ISPC_credentials && _ISPC_login && _ISPC_getZoneInfo && _ISPC_rmTxt
 }
 
 ####################  Private functions below ##################################
@@ -61,6 +61,21 @@ _ISPC_login() {
     _debug "Session ID: '${sessionID}'"
   else
     _err "Couldn't retrieve the Session ID."
+    return 1
+  fi
+}
+
+_ISPC_updateZoneSerial() {
+  _info "Update DNS zone serial"
+  curData="{\"session_id\":\"${sessionID}\",\"primary_id\":\"${zone}\",\"client_id\":\"${client_id}\",\"params\":{\"serial\":\"$newZoneSerial\"}}"
+  curResult="$(_post "${curData}" "${ISPC_Api}?dns_zone_update")"
+  _debug "Calling _ISPC_ZoneSerial: '${curData}' '${ISPC_Api}?dns_zone_update'"
+  _debug "Result of _ISPC_ZoneSerial: '$curResult'"
+  if _contains "${curResult}" '"code":"ok"'; then
+    _info "Zone serial number updated."
+    _debug "new zone serial number: '${newZoneSerial}'"
+  else
+    _err "Couldn't update zone serial number."
     return 1
   fi
 }
@@ -110,6 +125,8 @@ _ISPC_getZoneInfo() {
         ;;
       *) _info "Retrieved Zone ID" ;;
     esac
+    curSerialOld=$(echo "${curResult}" | _egrep_o "serial.*" | cut -d ':' -f 2 | cut -d '"' -f 2)
+    _debug "Current zone serial number '$curSerialOld'"
     client_id=$(echo "${curResult}" | _egrep_o "sys_userid.*" | cut -d ':' -f 2 | cut -d '"' -f 2)
     _debug "Client ID: '${client_id}'"
     case "${client_id}" in
@@ -139,7 +156,10 @@ _ISPC_addTxt() {
       _err "Couldn't add ACME Challenge TXT record to zone."
       return 1
       ;;
-    *) _info "Added ACME Challenge TXT record to zone." ;;
+    *) _info "Added ACME Challenge TXT record to zone."
+       newZoneSerial=$((curSerialOld + 1))
+       _ISPC_updateZoneSerial
+      ;;
   esac
 }
 
@@ -166,6 +186,8 @@ _ISPC_rmTxt() {
         _debug "Result of _ISPC_rmTxt: '$curResult'"
         if _contains "${curResult}" '"code":"ok"'; then
           _info "Removed ACME Challenge TXT record from zone."
+          newZoneSerial=$((curSerialOld + 1))
+          _ISPC_updateZoneSerial
         else
           _err "Couldn't remove ACME Challenge TXT record from zone."
           return 1
